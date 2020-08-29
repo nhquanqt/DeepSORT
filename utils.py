@@ -5,6 +5,24 @@ import json
 
 import bb_polygon
 
+def euclidean_distance(p1, p2):
+    vec = np.array(p1) - np.array(p2)
+    return np.sqrt(vec.dot(vec))
+
+def hausdorff_distance(a2d, b2d):
+    d_max = 0
+    for i in range(2):
+        d_min = np.minimum(euclidean_distance(a2d[i],b2d[0]), 
+                            euclidean_distance(a2d[i], b2d[1]))
+        d_max = np.maximum(d_max, d_min)
+    return d_max
+
+
+def cosin_similarity(a2d, b2d):  
+    a = np.array((a2d[1][0] - a2d[0][0], a2d[1][1] - a2d[0][1]))
+    b = np.array((b2d[1][0] - b2d[0][0], b2d[1][1] - b2d[0][1]))
+    return np.dot(a, b)/(np.linalg.norm(a)*np.linalg.norm(b))
+
 def check_bbox_intersect_polygon(polygon, bbox):
   """
   
