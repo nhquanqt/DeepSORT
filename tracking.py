@@ -8,6 +8,8 @@ from deep_sort.detection import Detection
 from deep_sort.tracker import Tracker
 from tools import generate_detections as gdet
 
+from utils import *
+
 label_colors = {
     -1: (127,127,127),
     1 : (0,0,0),
@@ -18,19 +20,42 @@ label_colors = {
 
 threshold = {
     1 : 0.1,
-    2 : 0.4,
-    3 : 0.4,
-    4 : 0.4
+    2 : 0.2,
+    3 : 0.3,
+    4 : 0.3
 }
 
-cam_num = 'cam_02'
+cam_num = 'cam_03'
 
-f = open('datasets/{}.txt'.format(cam_num))
+f = open('datasets/d4/{}.txt'.format(cam_num))
 events = f.readlines()
 
-f = json.load(open('datasets/{}.json'.format(cam_num)))
-zone = f['shapes'][0]['points']
-zone = np.array(zone, np.int32)
+polygon, paths = load_zone_anno('datasets/{}.json'.format(cam_num))
+polygon = np.array(polygon)
+
+with open('results/result_{}.txt'.format(cam_num)) as f:
+    result_lines = f.readlines()
+
+counting_event = {}
+
+for r in result_lines:
+    cam_num = r.split(' ')[0]
+    frame_id = int(r.split(' ')[1])
+    movement_id = int(r.split(' ')[2])
+    vehicle_class_id = int(r.split(' ')[3])
+    if frame_id not in counting_event.keys():
+        counting_event[frame_id] = {}
+        for i in range(1, len(paths) + 1):
+            counting_event[frame_id][i] = {
+                1:0, 2:0, 3:0, 4:0
+            }
+    counting_event[frame_id][movement_id][vehicle_class_id] += 1
+
+counting = {}
+for i in range(1, len(paths) + 1):
+    counting[i] = {
+        1:0, 2:0, 3:0, 4:0
+    }
 
 # Definition of the parameters
 max_cosine_distance = 0.5
@@ -46,76 +71,6 @@ tracker = Tracker(metric)
 
 track_labels = {}
 
-def find_tracking_label(tracking_box, boxes, iou_thresh = 0.3):
-    '''
-    Args:
-        tracking_box: shape (4) and format [x_min, y_min, x_max, y_max]
-        boxes: detection with shape (num, 5) and format [x1, y1, x2, y2, label]
-    Returns:
-        label of the tracking box
-    '''
-    if len(boxes) == 0:
-        return -1
-    x1 = boxes[:, 0]
-    y1 = boxes[:, 1]
-    x2 = boxes[:, 2]
-    y2 = boxes[:, 3]
-    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-
-    x_min, y_min, x_max, y_max = tracking_box
-    tracking_area = (x_max - x_min + 1) * (y_max - y_min + 1)
-
-    xx1 = np.maximum(x_min, x1)
-    yy1 = np.maximum(y_min, y1)
-    xx2 = np.minimum(x_max, x2)
-    yy2 = np.minimum(y_max, y2)
-
-    w = np.maximum(0.0, xx2 - xx1 + 1)
-    h = np.maximum(0.0, yy2 - yy1 + 1)
-    intersection = w * h
-
-    iou = intersection / (areas + tracking_area - intersection)
-    
-    if np.max(iou) < iou_thresh:
-        return -1
-    return boxes[np.argmax(iou), -1]
-
-def hard_nms(boxes, label, scores, iou_thresh=None):
-    """The basic hard non-maximum suppression.
-    Args:
-        dets: detection with shape (num, 5) and format [x1, y1, x2, y2, score].
-        iou_thresh: IOU threshold,
-    Returns:
-        numpy.array: Retained boxes.
-    """
-    iou_thresh = iou_thresh or 0.5
-    x1 = boxes[:, 0]
-    y1 = boxes[:, 1]
-    x2 = boxes[:, 2]
-    y2 = boxes[:, 3]
-
-    areas = (x2 - x1 + 1) * (y2 - y1 + 1)
-    order = scores.argsort()[::-1]
-
-    keep = []
-    while order.size > 0:
-        i = order[0]
-        keep.append(i)
-        xx1 = np.maximum(x1[i], x1[order[1:]])
-        yy1 = np.maximum(y1[i], y1[order[1:]])
-        xx2 = np.minimum(x2[i], x2[order[1:]])
-        yy2 = np.minimum(y2[i], y2[order[1:]])
-
-        w = np.maximum(0.0, xx2 - xx1 + 1)
-        h = np.maximum(0.0, yy2 - yy1 + 1)
-        intersection = w * h
-        overlap = intersection / (areas[i] + areas[order[1:]] - intersection)
-
-        inds = np.where(overlap <= iou_thresh)[0]
-        order = order[inds + 1]
-
-    return boxes[keep], label[keep], scores[keep]
-
 frame_id = 0
 event_id = 0
 
@@ -130,37 +85,51 @@ while cap.isOpened():
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
     image = np.array(image, np.float32) / 255.
 
-    frame = cv2.polylines(frame, [zone], True, (127,127,127), 5)
+    frame = cv2.polylines(frame, [polygon], True, (127,127,127), 5)
+
+    if frame_id + 1 in counting_event.keys():
+        for m_id in range(1, len(paths) + 1):
+            for i in range(1, 5):
+                counting[m_id][i] += counting_event[frame_id + 1][m_id][i]
+
+    # for c in counting:
+    #     print(c, counting[c])
+    # print('----------------')
+
+    for movement_id, path in paths.items():
+        frame = cv2.line(frame, (path[0][0], path[0][1]), (path[1][0], path[1][1]), path[2], 5)
+        movement_id = int(movement_id)
+        a, b, c, d = counting[movement_id].values()
+        frame = cv2.putText(frame, 
+                            '  {} {} {} {}'.format(a, b, c, d), 
+                            (path[1][0], path[1][1]), 
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1, path[2], 2)
 
     bboxes = []
     confidents = []
     labels = []
     dets = []
 
-    try:
-        while True:
-            e = list(map(float, events[event_id].split(' ')))
-            if e[0] != frame_id:
-                break
+    while True:
+        e = list(map(float, events[event_id].split(' ')))
+        if e[0] != frame_id:
+            break
 
-            x_min, y_min, x_max, y_max = np.array(e[1:5], np.int32)
+        x_min, y_min, x_max, y_max = np.array(e[1:5], np.int32)
+
+        if check_bbox_intersect_polygon(polygon, (x_min, y_min, x_max, y_max)):
             score = e[5]
             label = int(e[6])
             if score > threshold[label]:
-                x_c = (x_max + x_min) / 2
-                y_c = (y_max + y_min) / 2
-                w = x_max - x_min
-                h = y_max - y_min
                 bboxes.append((x_min, y_min, x_max, y_max))
                 confidents.append(score)
                 labels.append(label)
                 dets.append([x_min, y_min, x_max, y_max, label])
 
-            event_id += 1
-            if event_id >= len(events):
-                break
-    except:
-        print('error')
+        event_id += 1
+        if event_id >= len(events):
+            break
 
     bboxes = np.array(bboxes)
     confidents = np.array(confidents)
@@ -193,14 +162,16 @@ while cap.isOpened():
                 -1 : 0, 1 : 0, 2 : 0, 3 : 0, 4 : 0,
             }
         else:
-            x1, y1, x2, y2, _, _ = track_dict[track_id][-1]
-            x_c1 = (x1 + x2) / 2
-            y_c1 = (y1 + y2) / 2
             track_dict[track_id].append((x_min, y_min, x_max, y_max, frame_id, label))
-            x_c2 = (x_min + x_max) / 2
-            y_c2 = (y_min + y_max) / 2
-            x_c1, y_c1, x_c2, y_c2 = np.array([x_c1, y_c1, x_c2, y_c2], np.int32)
-            frame = cv2.line(frame, (x_c1, y_c1), (x_c2, y_c2), track_colors[track_id], 2)
+            l_track = len(track_dict[track_id])
+            for i in range(max(1,l_track - 10), l_track):
+                x_min, y_min, x_max, y_max, _, _ = track_dict[track_id][i - 1]
+                x_c1 = int((x_min + x_max) / 2)
+                y_c1 = int((y_min + y_max) / 2)
+                x_min, y_min, x_max, y_max, _, _ = track_dict[track_id][i]
+                x_c2 = int((x_min + x_max) / 2)
+                y_c2 = int((y_min + y_max) / 2)
+                frame = cv2.line(frame, (x_c1, y_c1), (x_c2, y_c2), track_colors[track_id], 2)
         
         track_labels[track_id][label] += 1
         for i in range(1,5):
@@ -211,7 +182,7 @@ while cap.isOpened():
         # frame = cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), track_colors[track_id], 2)
         frame = cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), label_colors[label], 2)
 
-    cv2.imshow('', frame)
+    cv2.imshow(cam_num, frame)
     if cv2.waitKey(1) == 27:
         break
     frame_id += 1
