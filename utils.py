@@ -5,6 +5,102 @@ import json
 
 import bb_polygon
 
+def check_bbox_intersect_polygon(bbox, polygon, mask):
+    polygon_t = [
+        [bbox[0], bbox[1]],
+        [bbox[2], bbox[1]],
+        [bbox[2], bbox[3]],
+        [bbox[0], bbox[3]],
+    ]
+    for p in polygon_t:
+        if check_point_inside_roi(p, mask):
+            return True
+    flag = True
+    for pt in polygon:
+        if pt[1] > bbox[1]:
+            flag = False
+    if flag:
+        return False
+    flag = True
+    for pt in polygon:
+        if pt[1] < bbox[3]:
+            flag = False
+    if flag:
+        return False
+    flag = True
+    for pt in polygon:
+        if pt[0] > bbox[0]:
+            flag = False
+    if flag:
+        return False
+    flag = True
+    for pt in polygon:
+        if pt[0] < bbox[2]:
+            flag = False
+    if flag:
+        return False
+    return check_two_polygon_intersect(polygon, polygon_t)
+
+def check_two_polygon_intersect(polygon_1, polygon_2):
+    for i in range(len(polygon_1)):
+        line = (polygon_1[i-1], polygon_1[i])
+        flag = True
+        for p1 in polygon_1:
+            for p2 in polygon_2:
+                if not check_line_intersect_segment(line, [p1, p2]):
+                    flag = False
+        if flag:
+            return False
+    return True
+
+
+def check_track_intersect_roi(track_list, mask):
+    for p in track_list:
+        if check_point_inside_roi(p, mask):
+            return True
+    return False
+
+def check_bbox_outside_roi(bbox, mask):
+    points = [  
+        [bbox[0], bbox[1]],
+        [bbox[0], bbox[3]],
+        [bbox[2], bbox[1]],
+        [bbox[2], bbox[3]],
+        [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2]
+    ]
+    for p in points:
+        if check_point_inside_roi(p, mask):
+            return False
+    return True
+
+def distance_point_to_line(point, line):
+    v = np.array([line[1][0] - line[0][0], line[1][1] - line[0][1]])
+    c =  - line[1][0] * v[1] + line[1][1] * v[0]
+    return abs(point[0] * v[1] - point[1] * v[0] + c) / np.sqrt(v.dot(v))
+
+def check_line_intersect_segment(line, segment):
+    '''
+    Both line and segment presented by two points (x,y)
+    '''
+    v = np.array([line[1][0] - line[0][0], line[1][1] - line[0][1]])
+    c =  - line[1][0] * v[1] + line[1][1] * v[0]
+    t0 = segment[0][0] * v[1] - segment[0][1] * v[0] + c
+    t1 = segment[1][0] * v[1] - segment[1][1] * v[0] + c
+    return (t0 * t1 <= 0)
+
+
+def intersect_area(bbox, polygon):
+    bbox_area = (bbox[2] - bbox[0] + 1) * (bbox[3] - bbox[1] + 1)
+    # TODO:
+
+def check_point_inside_roi(point, mask):
+    point = np.array(point, np.int32)
+    if point[0] < 0 or point[0] >= mask.shape[1]:
+        return False
+    if point[1] < 0 or point[1] >= mask.shape[0]:
+        return False
+    return mask[point[1],point[0]] != 0
+
 def euclidean_distance(p1, p2):
     vec = np.array(p1) - np.array(p2)
     return np.sqrt(vec.dot(vec))
@@ -23,19 +119,19 @@ def cosin_similarity(a2d, b2d):
     b = np.array((b2d[1][0] - b2d[0][0], b2d[1][1] - b2d[0][1]))
     return np.dot(a, b)/(np.linalg.norm(a)*np.linalg.norm(b))
 
-def check_bbox_intersect_polygon(polygon, bbox):
-  """
+# def check_bbox_intersect_polygon(bbox, polygon):
+#   """
   
-  Args:
-    polygon: List of points (x,y)
-    bbox: A tuple (xmin, ymin, xmax, ymax)
+#   Args:
+#     polygon: List of points (x,y)
+#     bbox: A tuple (xmin, ymin, xmax, ymax)
   
-  Returns:
-    True if the bbox intersect the polygon
-  """
-  x1, y1, x2, y2 = bbox
-  bb = [(x1,y1), (x2, y1), (x2,y2), (x1,y2)]
-  return bb_polygon.is_bounding_box_intersect(bb, polygon)
+#   Returns:
+#     True if the bbox intersect the polygon
+#   """
+#   x1, y1, x2, y2 = bbox
+#   bb = [(x1,y1), (x2, y1), (x2,y2), (x1,y2)]
+#   return bb_polygon.is_bounding_box_intersect(bb, polygon)
 
 def load_zone_anno(json_filename):
     """
@@ -51,6 +147,17 @@ def load_zone_anno(json_filename):
             paths[kk] = [(int(x), int(y)) for x, y
                     in it['points']]
             paths[kk].append((random.randint(0,256), random.randint(0,256), random.randint(0,256)))
+            for i in range(len(polygon)):
+                p0 = polygon[i-1]
+                p1 = polygon[i]
+                if check_line_intersect_segment(paths[kk][0:2], (p0,p1)):
+                    paths[kk].append([p0,p1])
+            d0 = distance_point_to_line(paths[kk][0], paths[kk][-1])
+            d1 = distance_point_to_line(paths[kk][1], paths[kk][-1])
+            if d0 < d1:
+                tmp = paths[kk][-1]
+                paths[kk][-1] = paths[kk][-2]
+                paths[kk][-2] = tmp
     return polygon, paths
 
 def find_tracking_label(tracking_box, boxes, iou_thresh = 0.3):

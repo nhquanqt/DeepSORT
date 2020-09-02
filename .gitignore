@@ -128,10 +128,12 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Data folder
+# Hiden files
+script.py
+
+# Data folders
 datasets/
 model_data/
-results/
-tracking_results/
-results_v3/
-tracking_results_v3/
+results*/
+tracking_results*/
+detection_results*/
